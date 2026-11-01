@@ -104,6 +104,7 @@ export class PanelApi {
     return {...client,inboundIds:raw?.inboundIds||client.inboundIds||[]};
   }
   async createClient({email,inboundId,volumeGb,expiryTime,subId,repId}){
+    if (expiryTime!==-30*86400000) throw new Error('اشتراک جدید باید ۳۰ روز پس از اولین استفاده فعال شود.');
     const body={client:{email,subId,totalGB:volumeGb*1073741824,expiryTime,enable:true,tgId:0,limitIp:0,limitHwid:0,comment:`Telegram reseller #${repId}`,reset:0,resetDay:0,resetWeekday:0},inboundIds:[inboundId]};
     await this.request('panel/api/clients/add',body);
   }

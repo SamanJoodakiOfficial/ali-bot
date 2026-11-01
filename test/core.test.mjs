@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Store} from '../src/store.mjs';
 import {Bot} from '../src/bot.mjs';
-import {addMonths,renewByMonths,extractIdentity,matchesIdentity,updatePayload} from '../src/resolve.mjs';
+import {addMonths,renewByMonths,firstUseExpiry,renewalQuota,extractIdentity,matchesIdentity,updatePayload} from '../src/resolve.mjs';
 import {parseAmount} from '../src/utils.mjs';
 import {loadConfig} from '../src/config.mjs';
 
@@ -93,6 +93,8 @@ test('creation flow uses month+volume and charges only after verified panel writ
     await x.click('23456789','r:createconfirm');
     const c=x.db.creation(1);assert.equal(c.status,'applied');
     assert.equal(c.volume_gb,30);assert.equal(c.months,1);
+    assert.equal(c.expiry_time,firstUseExpiry());
+    assert.equal(x.clients.get('r1_ali123').expiryTime,firstUseExpiry());
     assert.equal(x.clients.get('r1_ali123').totalGB,30*GB);
     assert.ok(x.qr.length>=1);
     assert.equal(x.db.owner('r1_ali123').rep_id,x.repId);
@@ -109,7 +111,7 @@ test('creation blocked if preflight panel fails',async()=>{
     assert.equal(x.db.creation(1),undefined);assert.equal(x.db.balance(x.repId),0);
   }finally{x.close();}
 });
-test('renewal verified and billed once; previous traffic and quota are preserved',async()=>{
+test('renewal resets old traffic and replaces quota; debt billed once',async()=>{
   const x=setup();try{
     const old=Date.now()+3*86400000;
     x.clients.set('old',{email:'old',enable:true,subId:'abcde',expiryTime:old,totalGB:60*GB,traffic:{up:2*GB,down:4*GB}});
@@ -121,14 +123,14 @@ test('renewal verified and billed once; previous traffic and quota are preserved
     assert.equal(x.db.renewal(1).status,'applied');
     assert.equal(x.db.renewal(1).months,1);
     assert.equal(x.db.balance(x.repId),300000);
-    assert.equal(x.clients.get('old').totalGB,90*GB);
-    assert.equal(x.clients.get('old').traffic.up,2*GB);
-    assert.equal(x.clients.get('old').traffic.down,4*GB);
+    assert.equal(x.clients.get('old').totalGB,30*GB);
+    assert.equal(x.clients.get('old').traffic.up,0);
+    assert.equal(x.clients.get('old').traffic.down,0);
     await x.click('23456789','r:renewconfirm');
     assert.equal(x.db.balance(x.repId),300000);
   }finally{x.close();}
 });
-test('renewal replaces a future expiry with only one month from confirmation, preserving unused GB',async()=>{
+test('renewal replaces future expiry and quota, resetting usage',async()=>{
   const x=setup();try{
     const now=Date.now();
     const oldExpiry=addMonths(now,3);
@@ -149,8 +151,8 @@ test('renewal replaces a future expiry with only one month from confirmation, pr
     assert.ok(result.expiryTime>=renewByMonths(oldExpiry,1,before));
     assert.ok(result.expiryTime<=renewByMonths(oldExpiry,1,after));
     assert.ok(result.expiryTime<oldExpiry);
-    assert.equal(result.totalGB,40*GB);
-    assert.equal(result.traffic.up+result.traffic.down,10*GB);
+    assert.equal(result.totalGB,20*GB);
+    assert.equal(result.traffic.up+result.traffic.down,0);
     assert.equal(x.db.balance(x.repId),20*10000);
   }finally{x.close();}
 });
@@ -234,4 +236,61 @@ test('history pagination merges create and renewal records',()=>{
     assert.equal(x.db.operations(x.repId,10,0)[0].kind,'renew');
     assert.equal(x.db.operationsAllCount(),1);
   }finally{x.close();}
+});
+
+test('first-use expiry and replacement quota are strictly limited',()=>{
+ assert.equal(firstUseExpiry(),-2592000000);
+ assert.throws(()=>firstUseExpiry(60),/۳۰ روز/);
+ assert.equal(renewalQuota(20),20*GB);
+ assert.throws(()=>renewalQuota(19),/۲۰/);
+});
+
+test('a never-used delayed-start subscription may still be renewed to one month from confirmation',async()=>{
+ const x=setup();try{
+  const old=firstUseExpiry();
+  x.clients.set('unused',{email:'unused',enable:true,subId:'unusedSubID',expiryTime:old,totalGB:25*GB,traffic:{up:0,down:0}});
+  x.db.transfer('unused',x.repId,'11111111');
+  await x.click('23456789',`r:renewaccount:${x.db.owner('unused').rowid}`);
+  await x.message('23456789','20');
+  await x.click('23456789','r:renewmonths:1');
+  await x.click('23456789','r:renewconfirm');
+  assert.equal(x.db.renewal(1).status,'applied');
+  assert.equal(x.clients.get('unused').totalGB,20*GB);
+  assert.ok(x.clients.get('unused').expiryTime>Date.now());
+  assert.equal(x.db.balance(x.repId),20*10000);
+ }finally{x.close();}
+});
+
+test('failed reset never charges and keeps an operation pending for manual review',async()=>{
+ const x=setup();try{
+  x.clients.set('resetfail',{email:'resetfail',subId:'resetfailSub',expiryTime:Date.now()+86400000,totalGB:50*GB,enable:true,traffic:{up:7*GB,down:2*GB}});
+  x.db.transfer('resetfail',x.repId,'11111111');
+  x.panel.resetTraffic=async()=>{throw Error('network dropped after POST');};
+  await x.click('23456789',`r:renewaccount:${x.db.owner('resetfail').rowid}`);
+  await x.message('23456789','25');
+  await x.click('23456789','r:renewmonths:1');
+  await x.click('23456789','r:renewconfirm');
+  assert.equal(x.clients.get('resetfail').totalGB,25*GB);
+  assert.equal(x.clients.get('resetfail').traffic.up,7*GB);
+  assert.equal(x.db.renewal(1).status,'review');
+  assert.equal(x.db.renewal(1).reset_state,'uncertain');
+  assert.equal(x.db.balance(x.repId),0);
+ }finally{x.close();}
+});
+
+test('failed quota update does not reset traffic or charge debt',async()=>{
+ const x=setup();try{
+  x.clients.set('writefail',{email:'writefail',subId:'writefailSub',expiryTime:Date.now()+86400000,totalGB:50*GB,enable:true,traffic:{up:2*GB,down:3*GB}});
+  x.db.transfer('writefail',x.repId,'11111111');
+  let resets=0;
+  x.panel.changeExpiry=async()=>{throw Error('panel rejected update');};
+  x.panel.resetTraffic=async()=>{resets++;};
+  await x.click('23456789',`r:renewaccount:${x.db.owner('writefail').rowid}`);
+  await x.message('23456789','20');
+  await x.click('23456789','r:renewmonths:1');
+  await x.click('23456789','r:renewconfirm');
+  assert.equal(resets,0);
+  assert.equal(x.db.renewal(1).status,'review');
+  assert.equal(x.db.balance(x.repId),0);
+ }finally{x.close();}
 });

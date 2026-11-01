@@ -23,11 +23,11 @@ test('API respects base path and bearer and paged search',async()=>{
 });
 test('create sends monthly GB bytes and inbound ids, not old inbound/client route',async()=>{
   const {api,calls}=mockAPI(()=>({obj:null}));
-  await api.createClient({email:'r1_customer',inboundId:7,volumeGb:30,expiryTime:1900000000000,subId:'hello12345',repId:1});
+  await api.createClient({email:'r1_customer',inboundId:7,volumeGb:30,expiryTime:-2592000000,subId:'hello12345',repId:1});
   assert.equal(calls[0].url.pathname,'/base/panel/api/clients/add');
   const body=JSON.parse(calls[0].opts.body);
   assert.deepEqual(body.inboundIds,[7]);assert.equal(body.client.totalGB,30*GB);
-  assert.equal(body.client.expiryTime,1900000000000);
+  assert.equal(body.client.expiryTime,-2592000000);
   assert.equal(body.client.subId,'hello12345');
 });
 test('update carries credential fields while renewing expiry and volume',async()=>{
@@ -100,4 +100,11 @@ test('toggle client also normalizes allowedIPs and never drops fields',async()=>
 test('normalization does not insert allowedIPs into accounts without the field',()=>{
   const p=updatePayload({email:'old',totalGB:20*GB,expiryTime:1800000000000},1800000000001);
   assert.equal(Object.hasOwn(p,'allowedIPs'),false);
+});
+
+test('resetTraffic invokes the per-client POST endpoint',async()=>{
+ const {api,calls}=mockAPI(()=>({obj:null}));
+ await api.resetTraffic('client-1');
+ assert.equal(calls[0].url.pathname,'/base/panel/api/clients/resetTraffic/client-1');
+ assert.equal(calls[0].opts.method,'POST');
 });

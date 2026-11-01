@@ -1,7 +1,7 @@
 import {randomBytes} from 'node:crypto';
 import {button as B,copyButton} from './telegram.mjs';
 import {money,number,short,html,dateText,parseAmount} from './utils.mjs';
-import {addMonths,renewByMonths,extractIdentity,quotaAddition,identityFingerprint,hasIdentityFingerprint} from './resolve.mjs';
+import {addMonths,renewByMonths,extractIdentity,renewalQuota,firstUseExpiry,identityFingerprint,hasIdentityFingerprint} from './resolve.mjs';
 import {periodNames,periodBounds} from './sales.mjs';
 import {createBackup,performRestore,validateBackup,backupFolder,MAX_UPLOAD_BYTES} from './maintenance.mjs';
 import {readFile,writeFile,mkdir,unlink} from 'node:fs/promises';
@@ -366,16 +366,16 @@ https://sub.example.com:2096/random-path/
       const savedOwner=this.db.owner(current.email);
       if(savedOwner && savedOwner.rep_id!==r.id)throw new Error('اجازه تمدید ندارید.');
       if(!savedOwner && (!s.payload.allowUnowned||!hasIdentityFingerprint(current,s.payload.proofKind,s.payload.proofHash)))throw new Error('برای تمدید حساب خارج از فهرست، لینک معتبر را دوباره بفرستید.');
-      if(Number(current.expiryTime)<=0)throw new Error('انقضای عادی برای این حساب ثبت نشده است.');
+      if(!Number.isSafeInteger(Number(current.expiryTime))||Number(current.expiryTime)===0)throw new Error('انقضای معتبر برای این حساب ثبت نشده است.');
       const price=this.db.customPrice(r.id,s.payload.volumeGb,months);
       const oldTotal=Number(current.totalGB);
       const traffic=await this.panel.traffic(current.email);
-      const newTotal=quotaAddition(oldTotal,s.payload.volumeGb);
+      const newTotal=renewalQuota(s.payload.volumeGb);
       const quoteAt=Date.now();
       const quote={email:current.email,planId:CUSTOM_PLAN_ID,months:1,volumeGb:s.payload.volumeGb,oldExpiry:Number(current.expiryTime),
         newExpiry:renewByMonths(Number(current.expiryTime),1,quoteAt),oldTotal,newTotal,oldUsed:traffic.used,price,at:quoteAt,allowUnowned:!savedOwner,proofKind:s.payload.proofKind||'',proofHash:s.payload.proofHash||''};
       this.db.setSession(id,'renew.confirm',quote);
-      return this.say(id,`🔄 <b>تأیید تمدید</b>\nحساب: <code>${html(current.email)}</code>\nحجم افزوده: ${quote.volumeGb} گیگ\nمدت: ۱ ماه\nنرخ هر گیگ/ماه: ${money(r.price_per_gb_month)}\nقیمت: <b>${money(price)}</b>\nپایان فعلی: ${dateText(quote.oldExpiry,this.cfg.timezone)}\nپایان جدید (تقریبی): ${dateText(quote.newExpiry,this.cfg.timezone)}\nحجم قابل استفاده قبل: ${(Math.max(0,quote.oldTotal-quote.oldUsed)/GB).toFixed(2)} گیگ\nحجم قابل استفاده بعد (تقریبی): ${(Math.max(0,quote.newTotal-quote.oldUsed)/GB).toFixed(2)} گیگ\n\nروزهای باقیمانده قبلی حذف می‌شوند و از لحظه تأیید، فقط یک ماه جدید شروع می‌شود. زمان دقیق پایان در لحظه تأیید محاسبه می‌شود. مصرف فعلی حفظ می‌شود، حجم خریداری‌شده اضافه می‌شود و فقط حجم خرید بدهکار می‌گردد.`,kb([B('✅ تأیید قطعی تمدید','r:renewconfirm')],[B('❌ لغو','home')]));
+      return this.say(id,`🔄 <b>تأیید تمدید</b>\nحساب: <code>${html(current.email)}</code>\nحجم جدید پس از ریست: ${quote.volumeGb} گیگ\nمدت: ۱ ماه\nنرخ هر گیگ/ماه: ${money(r.price_per_gb_month)}\nقیمت: <b>${money(price)}</b>\nپایان فعلی: ${dateText(quote.oldExpiry,this.cfg.timezone)}\nپایان جدید (تقریبی): ${dateText(quote.newExpiry,this.cfg.timezone)}\nحجم قابل استفاده قبل: ${(Math.max(0,quote.oldTotal-quote.oldUsed)/GB).toFixed(2)} گیگ\nحجم قابل استفاده بعد از ریست: ${(quote.newTotal/GB).toFixed(2)} گیگ\n\nروزهای باقیمانده قبلی حذف می‌شوند و از لحظه تأیید، فقط یک ماه جدید شروع می‌شود. زمان دقیق پایان در لحظه تأیید محاسبه می‌شود. حجم قدیمی کنار گذاشته می‌شود؛ شمارنده مصرف (آپلود/دانلود) صفر و سقف حجم برابر حجم خرید جدید می‌شود. بدهکاری فقط برای حجم خریداری‌شده ثبت می‌شود.`,kb([B('✅ تأیید قطعی تمدید','r:renewconfirm')],[B('❌ لغو','home')]));
     }
     if(op==='renewconfirm'){
       const s=this.db.session(id);if(s?.state!=='renew.confirm')throw new Error('درخواست منقضی شده است.');
@@ -519,7 +519,7 @@ ${registered}
     if(owner && owner.rep_id!==rep.id)throw new Error('این حساب متعلق به نماینده دیگری است.');
     if(!owner && (!allowUnowned || !hasIdentityFingerprint(client,proofKind,proofHash)))
       throw new Error('برای حساب خارج از فهرست، ارسال لینک معتبر لازم است.');
-    if(Number(client.expiryTime)<=0)throw new Error('این حساب انقضای عادی ندارد؛ تمدید خودکار ممکن نیست.');
+    if(!Number.isSafeInteger(Number(client.expiryTime))||Number(client.expiryTime)===0)throw new Error('این حساب تاریخ انقضای معتبری ندارد؛ تمدید خودکار ممکن نیست.');
     const total=Number(client.totalGB||0);
     if(!Number.isSafeInteger(total)||total<=0)throw new Error('حساب نامحدود یا دارای حجم نامعتبر است؛ تمدید خودکار ممکن نیست.');
     const traffic=await this.panel.traffic(client.email);
@@ -532,7 +532,7 @@ ${registered}
 انقضا: ${dateText(Number(client.expiryTime),this.cfg.timezone)}
 ${owner?'📌 در فهرست شما':'📎 تمدید بدون افزودن به فهرست'}
 
-حجم موردنظر برای <b>افزودن</b> را وارد کنید (حداقل ۲۰ گیگ).`,{email:client.email,allowUnowned:!owner,proofKind,proofHash});
+حجم <b>جدید بعد از ریست کامل</b> را وارد کنید (حداقل ۲۰ گیگ). حجم و مصرف قبلی از دوره جدید منتقل نمی‌شوند.`,{email:client.email,allowUnowned:!owner,proofKind,proofHash});
   }
   salesMenu(chat,repId){
     const admin=repId===null||this.admin(chat),prefix=admin?'a':'r';
@@ -724,18 +724,18 @@ ${owner?'📌 در فهرست شما':'📎 تمدید بدون افزودن ب�
       const email=`r${rep.id}_${safeEmail(raw)}`;
       const inbounds=await this.panel.listInbounds();
       if(!this.db.allowedInbounds().some(i=>i.id===p.inboundId)||!inbounds.some(i=>i.id===p.inboundId&&i.enable))throw new Error('اینباند مجاز و فعال نیست.');
-      const expiryTime=addMonths(Date.now(),p.months);
+      const expiryTime=firstUseExpiry();
       const price=this.db.customPrice(rep.id,p.volumeGb,p.months);
       const quote={email,planId:CUSTOM_PLAN_ID,months:p.months,volumeGb:p.volumeGb,inboundId:p.inboundId,expiryTime,
         subId:randomBytes(12).toString('hex'),price,at:Date.now()};
       this.db.setSession(id,'create.confirm',quote);
-      return this.say(id,`➕ <b>تأیید ساخت اشتراک</b>\nحساب: <code>${html(email)}</code>\nحجم: ${p.volumeGb} گیگ\nمدت: ${p.months} ماه\nاینباند: ${p.inboundId}\nنرخ هر گیگ/ماه: ${money(rep.price_per_gb_month)}\nپایان: ${dateText(expiryTime,this.cfg.timezone)}\nمبلغ بدهکاری: <b>${money(price)}</b>`,kb(
+      return this.say(id,`➕ <b>تأیید ساخت اشتراک</b>\nحساب: <code>${html(email)}</code>\nحجم: ${p.volumeGb} گیگ\nمدت: ۳۰ روز پس از اولین استفاده\nاینباند: ${p.inboundId}\nنرخ هر گیگ/ماه: ${money(rep.price_per_gb_month)}\nشروع اعتبار: پس از اولین استفاده (۳۰ روز)\nمبلغ بدهکاری: <b>${money(price)}</b>`,kb(
         [B('✅ ایجاد حساب و ثبت بدهی','r:createconfirm')],[B('❌ لغو','home')]));
     }
     if(state==='renew.volume'){
       const volumeGb=integer(raw,20,10000,'حجم');
       this.db.setSession(id,'renew.months',{...p,volumeGb});
-      return this.say(id,`📦 حجم افزوده: ${volumeGb} گیگ\nمدت ثابت: ۱ ماه.`,this.durationButtons('r:renewmonths'));
+      return this.say(id,`📦 حجم تازه پس از ریست: ${volumeGb} گیگ\nمدت ثابت: ۱ ماه.`,this.durationButtons('r:renewmonths'));
     }
     if(state==='renew.link'||state==='connect.link'){
       if(!raw)throw new Error('لینک یا کانفیگ را به صورت متن بفرستید.');
@@ -838,18 +838,41 @@ ${owner?'📌 قبلاً در فهرست شما ثبت شده است.':'برای
     const data=await this.panel.details(q.email);
     if(!owner&&!hasIdentityFingerprint(data,q.proofKind,q.proofHash))throw new Error('شناسه کانفیگ یا اشتراک عوض شده است؛ لینک را مجدداً ارسال کنید.');
     if(Number(data.expiryTime)!==q.oldExpiry||Number(data.totalGB)!==q.oldTotal)throw new Error('حساب در پنل تغییر کرده است. بررسی را مجدد انجام دهید.');
-    if(quotaAddition(q.oldTotal,q.volumeGb)!==q.newTotal)throw new Error('مقدار حجم اضافه شده معتبر نیست.');
+    if(renewalQuota(q.volumeGb)!==q.newTotal)throw new Error('حجم جدید تمدید با مقدار خرید مطابقت ندارد.');
     const traffic=await this.panel.traffic(q.email); if(traffic.used<0)throw new Error('مصرف نامعتبر است.');
     // Recompute at confirmation, not when the preview was shown: expiry must be
     // exactly one calendar month from this operation, even if the user waits.
     const newExpiry=renewByMonths(q.oldExpiry,1,Date.now());
     const opId=this.db.beginRenewal({repId:rep.id,email:q.email,planId:q.planId,months:q.months,volumeGb:q.volumeGb,oldTotal:q.oldTotal,newTotal:q.newTotal,oldUsed:q.oldUsed,price:q.price,oldExpiry:q.oldExpiry,newExpiry,actor:chat,authorizedUnowned:!owner});
-    try{await this.panel.changeExpiry(q.email,q.oldExpiry,newExpiry,q.newTotal);}catch(e){
-      // Preserve the panel rejection reason for admin review. A write may still
-      // have reached the server before a transport failure: do not auto-retry.
+    try {
+      await this.panel.changeExpiry(q.email,q.oldExpiry,newExpiry,q.newTotal);
+    } catch(e) {
+      // The write may have succeeded remotely. Never repeat it or perform a
+      // traffic reset on an uncertain write; require administrator review.
       const reason=String(e?.message||e?.name||'Unknown update error').replace(/[\r\n]/g,' ').slice(0,300);
       this.db.log(chat,'renewal.remote_error',String(opId),reason);
-      this.db.markRenewal(opId,'review',`Uncertain remote write: ${reason}`,chat);
+      this.db.markRenewal(opId,'review',`Uncertain quota/expiry write: ${reason}`,chat);
+    }
+    if (this.db.renewal(opId)?.status==='pending') {
+      // Two non-atomic remote steps: keep the operation in review on *any*
+      // ambiguity. Never retry resetTraffic automatically; it would erase
+      // any fresh traffic if the first request actually succeeded.
+      try {
+        // Never destroy existing traffic until quota AND expiry are confirmed.
+        const changed=await this.panel.details(q.email);
+        if(Number(changed.totalGB)!==q.newTotal || Number(changed.expiryTime)!==newExpiry)
+          throw new Error('حجم یا انقضا پس از ویرایش مطابق درخواست نیست؛ بدون ریست ترافیک متوقف شد.');
+        this.db.markReset(opId,'inflight');
+        await this.panel.resetTraffic(q.email);
+        const after=await this.panel.traffic(q.email);
+        if (after.used!==0) throw new Error('شمارنده مصرف پس از ریست صفر نیست؛ ممکن است کاربر هم‌زمان از کانفیگ استفاده کرده باشد.');
+        this.db.markReset(opId,'verified');
+      } catch(e) {
+        const reason=String(e?.message||e?.name||'Unknown traffic reset error').replace(/[\r\n]/g,' ').slice(0,300);
+        this.db.markReset(opId,this.db.renewal(opId)?.reset_state==='inflight'?'uncertain':'not_requested');
+        this.db.markRenewal(opId,'review',`Uncertain traffic reset: ${reason}`,chat);
+        this.db.log(chat,'renewal.reset_error',String(opId),reason);
+      }
     }
     const result=await this.reconcileRenew(opId,chat);
     await this.notifyOwners(`${this.db.renewal(opId).status==='applied'?'✅':'⚠️'} تمدید #${opId}\n${html(rep.name)} / ${html(q.email)}\n${html(result)}`,kb([B('عملیات معلق','a:pending')]));
@@ -877,10 +900,16 @@ ${owner?'📌 قبلاً در فهرست شما ثبت شده است.':'برای
     const expectedExpiry=Number(op.new_expiry);
     const actualTotal=Number(c.totalGB), actualExpiry=Number(c.expiryTime);
     if(actualExpiry===expectedExpiry && actualTotal===expectedTotal){
+      // Never charge unless both remote steps have been acknowledged and
+      // the reset counters were verified immediately after the reset call.
+      if(op.reset_state!=='verified'){
+        const reason=`${originalError?originalError+' | ':''}Quota/expiry updated but traffic reset not verified (state=${op.reset_state}). Review manually; no charge.`;
+        this.db.markRenewal(opId,'review',reason,actor);
+        return `⚠️ حجم و انقضا تغییر کرده، اما ریست ترافیک تأیید نشده است (وضعیت: ${html(op.reset_state)}). بدهی ثبت نشد؛ مدیر باید وضعیت را بررسی کند و درخواست را تکرار نکنید.`;
+      }
       this.db.completeRenewal(opId,actor);
-      // Preserve used traffic: quota only increases, usage is not reset.
       await this.debtCheck(op.rep_id);
-      return '✅ تمدید پنل تأیید و بدهی ثبت شد.';
+      return '✅ تمدید یک‌ماهه انجام شد؛ حجم و مصرف ریست و بدهی فقط برای حجم جدید ثبت شد.';
     }
     const summary=`expected ${expectedTotal/GB}GB,expiry=${expectedExpiry}; actual ${actualTotal/GB}GB,expiry=${actualExpiry}`;
     const reason=originalError

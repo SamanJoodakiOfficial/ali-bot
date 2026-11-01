@@ -7,6 +7,19 @@ export function quotaAddition(currentTotalBytes,purchasedGb) {
   if (!Number.isSafeInteger(target)) throw new Error('حجم جدید خارج از محدوده ایمن است.');
   return target;
 }
+// A renewal replaces the old quota; the panel's resetTraffic endpoint then
+// clears the separate upload/download counters. No remaining quota carries over.
+export function renewalQuota(purchasedGb) {
+  if (!Number.isInteger(purchasedGb) || purchasedGb < 20 || purchasedGb > 10000)
+    throw new Error('حجم خرید باید حداقل ۲۰ و حداکثر ۱۰۰۰۰ گیگ باشد.');
+  return purchasedGb * 1073741824;
+}
+// 3x-ui encodes "Start After First Use" as a negative number of milliseconds.
+// Unlike calendar months, this is necessarily a fixed duration: 30 days.
+export function firstUseExpiry(days=30) {
+  if (!Number.isInteger(days) || days!==30) throw new Error('اشتراک جدید فقط ۳۰ روز پس از اولین استفاده معتبر است.');
+  return -days * 86400000;
+}
 export function addMonths(baseMs,months) {
   if(!Number.isSafeInteger(baseMs)||baseMs<=0)throw new Error('تاریخ معتبر نیست.');
   if(!Number.isInteger(months)||months<1||months>24)throw new Error('مدت تنها به تعداد صحیح ماه (۱ تا ۲۴) است.');
@@ -22,9 +35,9 @@ export function addMonths(baseMs,months) {
 }
 // Renewal always replaces the remaining time with exactly ONE calendar month
 // starting at the renewal timestamp. Never add old remaining days to expiry.
-// Remaining traffic is handled independently by quotaAddition and is preserved.
+// Renewal traffic counters are reset through the panel after the quota update.
 export function renewByMonths(oldExpiry,months,now=Date.now()) {
-  if(!Number.isSafeInteger(oldExpiry)||oldExpiry<=0)throw new Error('حساب بدون تاریخ انقضای معتبر است.');
+  if(!Number.isSafeInteger(oldExpiry)||oldExpiry===0)throw new Error('حساب بدون تاریخ انقضای معتبر است.');
   if(months!==1)throw new Error('تمدید فقط برای یک ماه مجاز است.');
   if(!Number.isSafeInteger(now)||now<=0)throw new Error('زمان تمدید معتبر نیست.');
   return addMonths(now,1);

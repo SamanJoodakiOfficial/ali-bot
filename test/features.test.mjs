@@ -19,11 +19,15 @@ function env(){
  const panel={listInbounds:async()=>[{id:11,enable:true,protocol:'vless',remark:'Main'}],
   search:async(query)=>[...accounts.values()].filter(c=>c.email.includes(query)),
   details:async(email)=>{if(!accounts.has(email))throw Error('No account');return structuredClone(accounts.get(email));},
-  find:async(text)=>{const id=extractIdentity(text);const c=[...accounts.values()].find(c=>id.kind==='email'?id.value===c.email:id.kind==='subId'?id.value===c.subId:id.value===c.uuid);if(!c)throw Error('No match');return structuredClone(c);},
+  find:async(text)=>{const id=typeof text==='string'?extractIdentity(text):text;const c=[...accounts.values()].find(c=>id.kind==='email'?id.value===c.email:id.kind==='subId'?id.value===c.subId:id.value===c.uuid);if(!c)throw Error('No match');return structuredClone(c);},
   links:async(email)=>accounts.has(email)?[`vless://${accounts.get(email).uuid}@domain.example:443?type=tcp#${email}`]:[],
   createClient:async({email,volumeGb,expiryTime,subId})=>{accounts.set(email,{email,subId,uuid:'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',enable:true,expiryTime,totalGB:volumeGb*GB,inboundIds:[11],traffic:{up:0,down:0}});},
   changeExpiry:async(email,old,expiry,total)=>{const c=accounts.get(email);assert.equal(c.expiryTime,old);c.expiryTime=expiry;c.totalGB=total;},
-  resetTraffic:async()=>{},
+  resetTraffic:async(email)=>{accounts.get(email).traffic={up:0,down:0};},
+  traffic:async(email)=>({up:accounts.get(email)?.traffic?.up||0,down:accounts.get(email)?.traffic?.down||0,used:(accounts.get(email)?.traffic?.up||0)+(accounts.get(email)?.traffic?.down||0)}),
+  onlineSnapshot:async(email)=>email==='existing',
+  ipUsage:async()=>({recent:2,observed:4}),
+  lastSeen:async()=>Date.now()-2000,
   toggleClient:async()=>{}};
  const bot=new Bot({config:{ownerIds:new Set(['987650001']),timezone:'Asia/Tehran',resetTraffic:false,subscriptionBase:'https://sub.example/random/'},db,panel,tg});
  const click=(id,data)=>bot.handle({callback_query:{id:'cb',from:{id},data,message:{chat:{id,type:'private'}}}});
@@ -31,20 +35,23 @@ function env(){
  return {db,rep,other,bot,panel,accounts,qrs,messages,photos,click,input,close:()=>db.close()};
 }
 
-test('free GB selection requires minimum 20 and calculates per rep volume x months',async()=>{
+test('free GB selection requires minimum 20 and sells only one month',async()=>{
  const x=env();try{
   await x.click('123450001','r:create');await x.input('123450001','19');
   assert.match(x.messages.at(-1).text,/20/);
   await x.input('123450001','47');
   assert.equal(x.db.session('123450001').state,'create.months');
-  await x.click('123450001','r:createmonths:3');await x.click('123450001','r:createinbound:11');
+  await x.click('123450001','r:createmonths:3');
+  assert.equal(x.db.session('123450001').state,'create.months');
+  await x.click('123450001','r:createmonths:1');await x.click('123450001','r:createinbound:11');
   await x.input('123450001','newcustomer');
   const pre=x.db.session('123450001');
-  assert.equal(pre.payload.volumeGb,47);assert.equal(pre.payload.months,3);assert.equal(pre.payload.price,47*3*6000);
+  assert.equal(pre.payload.volumeGb,47);assert.equal(pre.payload.months,1);assert.equal(pre.payload.price,47*6000);
   await x.click('123450001','r:createconfirm');
   assert.equal(x.db.creation(1).status,'applied');
-  assert.equal(x.db.balance(x.rep),47*3*6000);
+  assert.equal(x.db.balance(x.rep),47*6000);
   assert.ok(x.qrs.some(q=>q.link.startsWith('vless://')));
+  assert.equal(x.accounts.get('r1_newcustomer').expiryTime,-2592000000);
   assert.ok(x.qrs.some(q=>q.link==='https://sub.example/random/'+x.accounts.get('r1_newcustomer').subId));
   assert.ok(x.messages.some(m=>m.keys?.some(row=>row.some(b=>b.copy_text))));
  }finally{x.close();}
@@ -57,6 +64,8 @@ test('subscription URL with random prefix resolves to owner and allows renewal',
   x.db.transfer('existing',x.rep,'987650001');
   await x.click('123450001','r:renew');
   await x.input('123450001','https://sub.example/r4nd0m-path/realSub123');
+  assert.equal(x.db.session('123450001').state,'link.review');
+  await x.click('123450001','r:linkrenew');
   assert.equal(x.db.session('123450001').state,'renew.volume');
   await x.input('123450001','45');await x.click('123450001','r:renewmonths:1');
   await x.click('123450001','r:renewconfirm');
@@ -117,7 +126,7 @@ test('each representative has an independent per-GB monthly rate; historical sal
   x.db.setGigRate(x.other,7000,'987650001');
   assert.equal(x.db.customPrice(x.rep,20,1),130000);
   assert.equal(x.db.customPrice(x.other,20,1),140000);
-  assert.equal(x.db.customPrice(x.rep,45,2),585000);
+  assert.throws(()=>x.db.customPrice(x.rep,45,2),/فقط یک‌ماهه/);
   assert.throws(()=>x.db.customPrice(x.other,19,1),/۲۰/);
   // Two representatives may create equal-size accounts, but their invoice prices differ.
   for(const [user,name] of [['123450001','alice'],['123450002','bob']]){

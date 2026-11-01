@@ -2,7 +2,8 @@ export const money = value => new Intl.NumberFormat('fa-IR').format(value) + ' �
 export const number = value => new Intl.NumberFormat('fa-IR').format(value);
 export const short = (s, max = 85) => String(s ?? '').slice(0, max);
 export function dateText(ms, timezone = 'Asia/Tehran') {
-  if (!ms || Number(ms) <= 0) return 'نامحدود/نامشخص';
+  if (Number(ms) < 0) return `پس از اولین استفاده: ${Math.round(Math.abs(Number(ms))/86400000)} روز`;
+  if (!ms || Number(ms) === 0) return 'نامحدود/نامشخص';
   return new Intl.DateTimeFormat('fa-IR', {timeZone:timezone, dateStyle:'medium', timeStyle:'short'}).format(new Date(ms));
 }
 export const clip = (s, n = 3500) => String(s).slice(0, n);
