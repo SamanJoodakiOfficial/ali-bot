@@ -843,6 +843,7 @@ ${owner?'📌 قبلاً در فهرست شما ثبت شده است.':'برای
       // Preserve the panel rejection reason for admin review. A write may still
       // have reached the server before a transport failure: do not auto-retry.
       const reason=String(e?.message||e?.name||'Unknown update error').replace(/[\r\n]/g,' ').slice(0,300);
+      this.db.log(chat,'renewal.remote_error',String(opId),reason);
       this.db.markRenewal(opId,'review',`Uncertain remote write: ${reason}`,chat);
     }
     const result=await this.reconcileRenew(opId,chat);
@@ -855,15 +856,32 @@ ${owner?'📌 قبلاً در فهرست شما ثبت شده است.':'برای
     return;
   }
   async reconcileRenew(opId,actor){
-    const op=this.db.renewal(opId);if(!op||!['pending','review'].includes(op.status))throw new Error('این تمدید قبلاً تعیین تکلیف شده است.');
+    const op=this.db.renewal(opId);
+    if(!op||!['pending','review'].includes(op.status))throw new Error('این تمدید قبلاً تعیین تکلیف شده است.');
+    // A rejected/uncertain write is not the same as a successful write with a
+    // mismatched readback. Do not erase the original API rejection on reconcile.
+    const originalError=String(op.error||'');
     let c;
-    try{c=await this.panel.details(op.email);}catch{this.db.markRenewal(opId,'review','Cannot verify panel update',actor);return '⚠️ دریافت وضعیت پنل ناموفق بود؛ بررسی دستی الزامی است.';}
-    if(Number(c.expiryTime)===op.new_expiry && Number(c.totalGB)===(op.new_total??op.volume_gb*GB)){
-      this.db.completeRenewal(opId,actor);
-      // Never reset used traffic: unused quota remains available after additive renewal.
-      await this.debtCheck(op.rep_id);return '✅ تمدید پنل تأیید و بدهی ثبت شد.';
+    try {c=await this.panel.details(op.email);}
+    catch(e){
+      const cause=String(e?.message||e?.name||'unknown').replace(/https?:\/\/\S+/g,'[link]').slice(0,160);
+      this.db.markRenewal(opId,'review',`${originalError?originalError+' | ':''}Panel readback failed: ${cause}`,actor);
+      return `⚠️ بررسی وضعیت پنل ناموفق بود؛ عملیات #${opId} در انتظار بررسی مدیر ماند. ${originalError?'دلیل اولیه در سوابق ثبت شده است.':''}`;
     }
-    this.db.markRenewal(opId,'review','Panel expiry/quota do not match',actor);
-    return '⚠️ وضعیت حجم یا انقضا با درخواست برابر نیست؛ بدهی ثبت نشد و مدیر باید بررسی کند.';
-  }
-}
+    const expectedTotal=Number(op.new_total??op.volume_gb*GB);
+    const expectedExpiry=Number(op.new_expiry);
+    const actualTotal=Number(c.totalGB), actualExpiry=Number(c.expiryTime);
+    if(actualExpiry===expectedExpiry && actualTotal===expectedTotal){
+      this.db.completeRenewal(opId,actor);
+      // Preserve used traffic: quota only increases, usage is not reset.
+      await this.debtCheck(op.rep_id);
+      return '✅ تمدید پنل تأیید و بدهی ثبت شد.';
+    }
+    const summary=`expected ${expectedTotal/GB}GB,expiry=${expectedExpiry}; actual ${actualTotal/GB}GB,expiry=${actualExpiry}`;
+    const reason=originalError
+      ? `${originalError} | ${summary}`
+      : `Panel reported success but readback differs: ${summary}`;
+    this.db.markRenewal(opId,'review',reason,actor);
+    const reasonHint=originalError?' درخواست API خطا داده است؛ علت آن در سوابق ثبت شد.':' نتیجه درخواست در پنل با انتظار مطابقت ندارد.';
+    return `⚠️ تمدید #${opId} تأیید نشد؛ بدهی ثبت نشد.${reasonHint}\nحجم مورد انتظار: ${(expectedTotal/GB).toFixed(2)} گیگ | حجم واقعی: ${(actualTotal/GB).toFixed(2)} گیگ\nانقضای مورد انتظار: ${dateText(expectedExpiry,this.cfg.timezone)}\nانقضای واقعی: ${dateText(actualExpiry,this.cfg.timezone)}\nتا تعیین تکلیف، دوباره تمدید نکنید.`;
+  }}

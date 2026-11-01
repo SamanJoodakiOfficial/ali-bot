@@ -247,7 +247,7 @@ INSERT OR IGNORE INTO bank(id,card,iban,holder) VALUES(1,'','','');
   markRenewal(id,status,error='',actor='system'){
     if(!['failed','review'].includes(status))throw new Error('وضعیت نامعتبر');
     this.tx(()=>{
-      const changed=this.run("UPDATE renewals SET status=?,error=?,completed_at=? WHERE id=? AND status IN ('pending','review')",status,String(error).slice(0,200),this.now(),id);
+      const changed=this.run("UPDATE renewals SET status=?,error=?,completed_at=? WHERE id=? AND status IN ('pending','review')",status,String(error).slice(0,650),this.now(),id);
       if(changed.changes)this.log(actor,`renewal.${status}`,String(id),String(error).slice(0,120));
     });
   }
@@ -294,7 +294,7 @@ INSERT OR IGNORE INTO bank(id,card,iban,holder) VALUES(1,'','','');
   });}
   markCreation(id,status,error='',actor='system'){
     if(!['failed','review'].includes(status))throw new Error('وضعیت نامعتبر');
-    this.tx(()=>{const out=this.run("UPDATE creations SET status=?,error=?,completed_at=? WHERE id=? AND status IN ('pending','review')",status,String(error).slice(0,200),this.now(),id);
+    this.tx(()=>{const out=this.run("UPDATE creations SET status=?,error=?,completed_at=? WHERE id=? AND status IN ('pending','review')",status,String(error).slice(0,650),this.now(),id);
       if(out.changes)this.log(actor,`create.${status}`,id,String(error).slice(0,100));});
   }
   createPayment(repId,amount,reference,receipt,actor){return this.tx(()=>{

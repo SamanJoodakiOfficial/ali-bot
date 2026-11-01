@@ -15,7 +15,7 @@ export class PanelApi {
     if(!response.ok)throw new PanelError(`پنل HTTP ${response.status} برگرداند. مسیر پایه و نسخه API را بررسی کنید.`,response.status);
     let obj;
     try {obj=await response.json();}catch{throw new PanelError('پاسخ پنل JSON نیست؛ مسیر پایه را اصلاح کنید.');}
-    if(obj?.success!==true)throw new PanelError(`پنل درخواست را رد کرد: ${String(obj?.msg||'دسترسی یا سازگاری API').slice(0,100)}`,response.status);
+    if(obj?.success!==true)throw new PanelError(`پنل درخواست را رد کرد: ${String(obj?.msg||'دسترسی یا سازگاری API').replace(/https?:\/\/\S+/g,'[link]').slice(0,240)}`,response.status);
     return obj.obj;
   }
   getClient(email){return this.request(`panel/api/clients/get/${encodeURIComponent(email)}`);}
