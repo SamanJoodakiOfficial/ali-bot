@@ -97,12 +97,16 @@ export function nextExpiry(oldExpiry,days,now=Date.now()) {
 }
 export function updatePayload(client, newExpiry) {
   // API replaces client instead of patching it: retain every documented editable field.
-  const fields=['id','email','uuid','password','auth','secret','flow','security','subId','totalGB','expiryTime',
+  const fields=['email','uuid','password','auth','secret','flow','security','subId','totalGB','expiryTime',
   'enable','limitIp','limitHwid','tgId','comment','group','reset','resetDay','resetWeekday','resetMax',
   'trafficReset','trafficResetDay','reverse','adTag','allowedIPs','keepAlive','privateKey','publicKey','preSharedKey',
   'clientHostRuleIds','forwardedPorts'];
   const data={};
   for(const key of fields)if(Object.hasOwn(client,key))data[key]=client[key];
+  // In the GET response, id is the numeric database row key. The update API
+  // uses id for the Xray credential UUID (as the 3x-ui frontend does).
+  // Never forward the numeric database ID into that field.
+  if(typeof client.uuid==='string' && client.uuid.trim()) data.id=client.uuid;
   data.expiryTime=newExpiry;
   data.enable=true;
   return data;

@@ -839,7 +839,12 @@ ${owner?'📌 قبلاً در فهرست شما ثبت شده است.':'برای
     if(quotaAddition(q.oldTotal,q.volumeGb)!==q.newTotal)throw new Error('مقدار حجم اضافه شده معتبر نیست.');
     const traffic=await this.panel.traffic(q.email); if(traffic.used<0)throw new Error('مصرف نامعتبر است.');
     const opId=this.db.beginRenewal({repId:rep.id,email:q.email,planId:q.planId,months:q.months,volumeGb:q.volumeGb,oldTotal:q.oldTotal,newTotal:q.newTotal,oldUsed:q.oldUsed,price:q.price,oldExpiry:q.oldExpiry,newExpiry:q.newExpiry,actor:chat,authorizedUnowned:!owner});
-    try{await this.panel.changeExpiry(q.email,q.oldExpiry,q.newExpiry,q.newTotal);}catch{this.db.markRenewal(opId,'review','Uncertain remote write',chat);}
+    try{await this.panel.changeExpiry(q.email,q.oldExpiry,q.newExpiry,q.newTotal);}catch(e){
+      // Preserve the panel rejection reason for admin review. A write may still
+      // have reached the server before a transport failure: do not auto-retry.
+      const reason=String(e?.message||e?.name||'Unknown update error').replace(/[\r\n]/g,' ').slice(0,300);
+      this.db.markRenewal(opId,'review',`Uncertain remote write: ${reason}`,chat);
+    }
     const result=await this.reconcileRenew(opId,chat);
     await this.notifyOwners(`${this.db.renewal(opId).status==='applied'?'✅':'⚠️'} تمدید #${opId}\n${html(rep.name)} / ${html(q.email)}\n${html(result)}`,kb([B('عملیات معلق','a:pending')]));
     await this.say(chat,`${html(result)}\nتمدید #${opId}\nحساب: <code>${html(q.email)}</code>\nمانده: ${money(this.db.balance(rep.id))}`,kb(...(this.db.owner(q.email)?[[B('🔗 کانفیگ، Subscription Link و QR',`r:links:${this.db.owner(q.email).rowid}`)]]:[]),back()));
