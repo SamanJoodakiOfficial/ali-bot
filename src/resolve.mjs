@@ -95,6 +95,33 @@ export function nextExpiry(oldExpiry,days,now=Date.now()) {
   if (!Number.isSafeInteger(next))throw new Error('تاریخ پایان نامعتبر است.');
   return next;
 }
+// Older 3x-ui builds can return a string for the WireGuard allowedIPs field,
+// even though the update endpoint requires a JSON array ([]string in Go).
+// Preserve restrictions faithfully rather than blindly passing the string back.
+export function normalizeAllowedIPs(value) {
+  if (value == null) return [];
+  if (Array.isArray(value)) {
+    if (!value.every(ip => typeof ip === 'string'))
+      throw new Error('فرمت allowedIPs پنل معتبر نیست؛ مقدار باید آرایه‌ای از رشته‌ها باشد.');
+    return [...value];
+  }
+  if (typeof value !== 'string')
+    throw new Error('فرمت allowedIPs پنل معتبر نیست؛ برای جلوگیری از تغییر ناخواسته حساب، عملیات متوقف شد.');
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === 'null') return [];
+  if (trimmed.startsWith('[')) {
+    let parsed;
+    try { parsed = JSON.parse(trimmed); }
+    catch { throw new Error('فرمت JSON فیلد allowedIPs پنل نامعتبر است؛ عملیات متوقف شد.'); }
+    if (!Array.isArray(parsed) || !parsed.every(ip => typeof ip === 'string'))
+      throw new Error('فرمت allowedIPs پنل معتبر نیست؛ انتظار آرایه رشته‌ها وجود دارد.');
+    return parsed;
+  }
+  // Some older panels store a comma-separated WireGuard address list.
+  // Do not drop nonempty restrictions when normalizing to the API's []string.
+  return trimmed.split(/[,\r\n]+/).map(ip => ip.trim()).filter(Boolean);
+}
+
 export function updatePayload(client, newExpiry) {
   // API replaces client instead of patching it: retain every documented editable field.
   const fields=['email','uuid','password','auth','secret','flow','security','subId','totalGB','expiryTime',
@@ -103,6 +130,9 @@ export function updatePayload(client, newExpiry) {
   'clientHostRuleIds','forwardedPorts'];
   const data={};
   for(const key of fields)if(Object.hasOwn(client,key))data[key]=client[key];
+  // The read API may expose allowedIPs as a legacy string; the Go update API
+  // requires an actual JSON []string. Normalize only when the field exists.
+  if(Object.hasOwn(data,'allowedIPs'))data.allowedIPs=normalizeAllowedIPs(data.allowedIPs);
   // In the GET response, id is the numeric database row key. The update API
   // uses id for the Xray credential UUID (as the 3x-ui frontend does).
   // Never forward the numeric database ID into that field.
