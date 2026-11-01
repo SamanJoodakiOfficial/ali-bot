@@ -1,0 +1,15 @@
+{
+  "name": "sanaei-reseller-manager",
+  "version": "2.4.0",
+  "private": true,
+  "dependencies": {"qrcode": "^1.5.4"},
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "test": "node --test test/*.test.mjs",
+    "diagnose": "node src/diagnose.mjs"
+  }
+}
