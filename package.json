@@ -1,8 +1,10 @@
 {
   "name": "sanaei-reseller-manager",
-  "version": "2.4.0",
+  "version": "2.4.4",
   "private": true,
-  "dependencies": {"qrcode": "^1.5.4"},
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.13.0"

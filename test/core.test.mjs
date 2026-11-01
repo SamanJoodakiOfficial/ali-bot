@@ -21,6 +21,7 @@ function setup(){
     async changeExpiry(email,oldExpiry,expiry,total){const x=clients.get(email);if(x.expiryTime!==oldExpiry)throw new Error('changed');x.expiryTime=expiry;x.totalGB=total;},
     async toggleClient(email,expected){const x=clients.get(email);if(x.enable!==expected)throw new Error('changed');x.enable=!expected;},
     async resetTraffic(email){clients.get(email).traffic={up:0,down:0};},
+    async traffic(email){const c=clients.get(email);return {up:c.traffic?.up||0,down:c.traffic?.down||0,used:(c.traffic?.up||0)+(c.traffic?.down||0)};},
     async find(input){const email=input.startsWith('email:')?input.slice(6):[...clients.values()].find(c=>c.subId===input.split('/').at(-1))?.email;return this.details(email);},
     async links(email){const x=clients.get(email);return x?[`vless://${x.uuid||'11111111-2222-3333-4444-555555555555'}@example.org:443?type=tcp#${email}`]:[];},
     async validate(){return {total:clients.size}}
@@ -37,6 +38,18 @@ test('monthly calendar clamps end of month and enforces integer months',()=>{
   assert.throws(()=>addMonths(Date.now(),1.5));
   assert.ok(renewByMonths(Date.now()-86400000,1)>Date.now());
 });
+test('renewal discards ALL previous time (future or expired) and allows only one calendar month',()=>{
+  const now=Date.UTC(2026,0,31,14,25,0);
+  const next=Date.UTC(2026,1,28,14,25,0);
+  // An account with many days remaining loses that remaining time on renewal.
+  assert.equal(renewByMonths(Date.UTC(2026,5,1),1,now),next);
+  // Expired accounts receive the exact same one-month window from NOW.
+  assert.equal(renewByMonths(Date.UTC(2025,8,1),1,now),next);
+  // No one can choose 2 or more months through the renewal helper.
+  assert.throws(()=>renewByMonths(Date.UTC(2026,5,1),2,now),/فقط.*یک ماه/);
+  assert.throws(()=>renewByMonths(Date.UTC(2026,5,1),0,now),/فقط.*یک ماه/);
+});
+
 test('config rejects fake /panel suffix and accepts no proxy',()=>{
   const env={TELEGRAM_BOT_TOKEN:'fake-token',PANEL_API_TOKEN:'fake-panel',OWNER_TELEGRAM_IDS:'11111111',PANEL_URL:'https://panel.example.net/base/'};
   assert.equal(loadConfig(env).telegramProxyUrl,'');
@@ -57,7 +70,7 @@ test('client identity parser supports subscription paths and vless credentials',
 });
 test('retain client fields for full update',()=>{
   const v=updatePayload({email:'a',uuid:'x',subId:'y',totalGB:44,enable:false,flow:'vision',tgId:5},123);
-  assert.equal(v.flow,'vision');assert.equal(v.uuid,'x');assert.equal(v.totalGB,44);assert.equal(v.expiryTime,123);
+  assert.equal(v.flow,'vision');assert.equal(v.uuid,'x');assert.equal(v.id,'x');assert.equal(v.totalGB,44);assert.equal(v.expiryTime,123);
 });
 test('admin permissions and representative isolation',async()=>{
   const x=setup();try{
@@ -96,7 +109,7 @@ test('creation blocked if preflight panel fails',async()=>{
     assert.equal(x.db.creation(1),undefined);assert.equal(x.db.balance(x.repId),0);
   }finally{x.close();}
 });
-test('renewal verified and billed once; traffic reset',async()=>{
+test('renewal verified and billed once; previous traffic and quota are preserved',async()=>{
   const x=setup();try{
     const old=Date.now()+3*86400000;
     x.clients.set('old',{email:'old',enable:true,subId:'abcde',expiryTime:old,totalGB:60*GB,traffic:{up:2*GB,down:4*GB}});
@@ -108,12 +121,40 @@ test('renewal verified and billed once; traffic reset',async()=>{
     assert.equal(x.db.renewal(1).status,'applied');
     assert.equal(x.db.renewal(1).months,1);
     assert.equal(x.db.balance(x.repId),300000);
-    assert.equal(x.clients.get('old').totalGB,30*GB);
-    assert.equal(x.clients.get('old').traffic.up,0);
+    assert.equal(x.clients.get('old').totalGB,90*GB);
+    assert.equal(x.clients.get('old').traffic.up,2*GB);
+    assert.equal(x.clients.get('old').traffic.down,4*GB);
     await x.click('23456789','r:renewconfirm');
     assert.equal(x.db.balance(x.repId),300000);
   }finally{x.close();}
 });
+test('renewal replaces a future expiry with only one month from confirmation, preserving unused GB',async()=>{
+  const x=setup();try{
+    const now=Date.now();
+    const oldExpiry=addMonths(now,3);
+    x.clients.set('future_customer',{email:'future_customer',enable:true,subId:'futureSub123',expiryTime:oldExpiry,totalGB:20*GB,traffic:{up:4*GB,down:6*GB}});
+    x.db.transfer('future_customer',x.repId,'11111111');
+    await x.click('23456789',`r:renewaccount:${x.db.owner('future_customer').rowid}`);
+    await x.message('23456789','20');
+    await x.click('23456789','r:renewmonths:1');
+    assert.match(x.sent.at(-1).text,/روزهای باقیمانده قبلی حذف می‌شوند/);
+    assert.equal(x.db.session('23456789').payload.months,1);
+    const before=Date.now();
+    await x.click('23456789','r:renewconfirm');
+    const after=Date.now();
+    const result=x.clients.get('future_customer');
+    const op=x.db.renewal(1);
+    assert.equal(op.status,'applied');
+    assert.equal(op.months,1);
+    assert.ok(result.expiryTime>=renewByMonths(oldExpiry,1,before));
+    assert.ok(result.expiryTime<=renewByMonths(oldExpiry,1,after));
+    assert.ok(result.expiryTime<oldExpiry);
+    assert.equal(result.totalGB,40*GB);
+    assert.equal(result.traffic.up+result.traffic.down,10*GB);
+    assert.equal(x.db.balance(x.repId),20*10000);
+  }finally{x.close();}
+});
+
 test('uncertain create never auto-charges and remains for manager review',async()=>{
   const x=setup();try{
     x.panel.createClient=async()=>{throw new Error('timeout')};

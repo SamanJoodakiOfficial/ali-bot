@@ -20,9 +20,14 @@ export function addMonths(baseMs,months) {
   next.setUTCDate(Math.min(day,last));
   return next.getTime();
 }
+// Renewal always replaces the remaining time with exactly ONE calendar month
+// starting at the renewal timestamp. Never add old remaining days to expiry.
+// Remaining traffic is handled independently by quotaAddition and is preserved.
 export function renewByMonths(oldExpiry,months,now=Date.now()) {
   if(!Number.isSafeInteger(oldExpiry)||oldExpiry<=0)throw new Error('حساب بدون تاریخ انقضای معتبر است.');
-  return addMonths(Math.max(oldExpiry,now),months);
+  if(months!==1)throw new Error('تمدید فقط برای یک ماه مجاز است.');
+  if(!Number.isSafeInteger(now)||now<=0)throw new Error('زمان تمدید معتبر نیست.');
+  return addMonths(now,1);
 }
 // The bot NEVER downloads arbitrary subscription URLs or echoes full config links.
 // Extract only an identifier, then look it up inside the trusted 3x-ui panel.

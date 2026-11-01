@@ -371,10 +371,11 @@ https://sub.example.com:2096/random-path/
       const oldTotal=Number(current.totalGB);
       const traffic=await this.panel.traffic(current.email);
       const newTotal=quotaAddition(oldTotal,s.payload.volumeGb);
+      const quoteAt=Date.now();
       const quote={email:current.email,planId:CUSTOM_PLAN_ID,months:1,volumeGb:s.payload.volumeGb,oldExpiry:Number(current.expiryTime),
-        newExpiry:renewByMonths(Number(current.expiryTime),1),oldTotal,newTotal,oldUsed:traffic.used,price,at:Date.now(),allowUnowned:!savedOwner,proofKind:s.payload.proofKind||'',proofHash:s.payload.proofHash||''};
+        newExpiry:renewByMonths(Number(current.expiryTime),1,quoteAt),oldTotal,newTotal,oldUsed:traffic.used,price,at:quoteAt,allowUnowned:!savedOwner,proofKind:s.payload.proofKind||'',proofHash:s.payload.proofHash||''};
       this.db.setSession(id,'renew.confirm',quote);
-      return this.say(id,`🔄 <b>تأیید تمدید</b>\nحساب: <code>${html(current.email)}</code>\nحجم افزوده: ${quote.volumeGb} گیگ\nمدت: ۱ ماه\nنرخ هر گیگ/ماه: ${money(r.price_per_gb_month)}\nقیمت: <b>${money(price)}</b>\nپایان فعلی: ${dateText(quote.oldExpiry,this.cfg.timezone)}\nپایان جدید: ${dateText(quote.newExpiry,this.cfg.timezone)}\nحجم قابل استفاده قبل: ${(Math.max(0,quote.oldTotal-quote.oldUsed)/GB).toFixed(2)} گیگ\nحجم قابل استفاده بعد (تقریبی): ${(Math.max(0,quote.newTotal-quote.oldUsed)/GB).toFixed(2)} گیگ\n\nمصرف فعلی حفظ می‌شود، حجم خریداری‌شده اضافه می‌شود و فقط حجم خرید بدهکار می‌گردد.`,kb([B('✅ تأیید قطعی تمدید','r:renewconfirm')],[B('❌ لغو','home')]));
+      return this.say(id,`🔄 <b>تأیید تمدید</b>\nحساب: <code>${html(current.email)}</code>\nحجم افزوده: ${quote.volumeGb} گیگ\nمدت: ۱ ماه\nنرخ هر گیگ/ماه: ${money(r.price_per_gb_month)}\nقیمت: <b>${money(price)}</b>\nپایان فعلی: ${dateText(quote.oldExpiry,this.cfg.timezone)}\nپایان جدید (تقریبی): ${dateText(quote.newExpiry,this.cfg.timezone)}\nحجم قابل استفاده قبل: ${(Math.max(0,quote.oldTotal-quote.oldUsed)/GB).toFixed(2)} گیگ\nحجم قابل استفاده بعد (تقریبی): ${(Math.max(0,quote.newTotal-quote.oldUsed)/GB).toFixed(2)} گیگ\n\nروزهای باقیمانده قبلی حذف می‌شوند و از لحظه تأیید، فقط یک ماه جدید شروع می‌شود. زمان دقیق پایان در لحظه تأیید محاسبه می‌شود. مصرف فعلی حفظ می‌شود، حجم خریداری‌شده اضافه می‌شود و فقط حجم خرید بدهکار می‌گردد.`,kb([B('✅ تأیید قطعی تمدید','r:renewconfirm')],[B('❌ لغو','home')]));
     }
     if(op==='renewconfirm'){
       const s=this.db.session(id);if(s?.state!=='renew.confirm')throw new Error('درخواست منقضی شده است.');
@@ -828,6 +829,7 @@ ${owner?'📌 قبلاً در فهرست شما ثبت شده است.':'برای
     return '⚠️ مشخصات حساب در پنل با درخواست برابر نیست. مدیر باید آن را دستی بررسی کند؛ بدهی ثبت نشد.';
   }
   async performRenewal(chat,rep,q){
+    if(q.months!==1)throw new Error('تمدید فقط یک‌ماهه است.');
     if(this.db.customPrice(rep.id,q.volumeGb,q.months)!==q.price)throw new Error('نرخ تغییر کرده؛ تمدید را از ابتدا انجام دهید.');
     if(Date.now()-q.at>600000)throw new Error('پیش‌نمایش منقضی شده است.');
     const owner=this.db.owner(q.email);
@@ -838,8 +840,11 @@ ${owner?'📌 قبلاً در فهرست شما ثبت شده است.':'برای
     if(Number(data.expiryTime)!==q.oldExpiry||Number(data.totalGB)!==q.oldTotal)throw new Error('حساب در پنل تغییر کرده است. بررسی را مجدد انجام دهید.');
     if(quotaAddition(q.oldTotal,q.volumeGb)!==q.newTotal)throw new Error('مقدار حجم اضافه شده معتبر نیست.');
     const traffic=await this.panel.traffic(q.email); if(traffic.used<0)throw new Error('مصرف نامعتبر است.');
-    const opId=this.db.beginRenewal({repId:rep.id,email:q.email,planId:q.planId,months:q.months,volumeGb:q.volumeGb,oldTotal:q.oldTotal,newTotal:q.newTotal,oldUsed:q.oldUsed,price:q.price,oldExpiry:q.oldExpiry,newExpiry:q.newExpiry,actor:chat,authorizedUnowned:!owner});
-    try{await this.panel.changeExpiry(q.email,q.oldExpiry,q.newExpiry,q.newTotal);}catch(e){
+    // Recompute at confirmation, not when the preview was shown: expiry must be
+    // exactly one calendar month from this operation, even if the user waits.
+    const newExpiry=renewByMonths(q.oldExpiry,1,Date.now());
+    const opId=this.db.beginRenewal({repId:rep.id,email:q.email,planId:q.planId,months:q.months,volumeGb:q.volumeGb,oldTotal:q.oldTotal,newTotal:q.newTotal,oldUsed:q.oldUsed,price:q.price,oldExpiry:q.oldExpiry,newExpiry,actor:chat,authorizedUnowned:!owner});
+    try{await this.panel.changeExpiry(q.email,q.oldExpiry,newExpiry,q.newTotal);}catch(e){
       // Preserve the panel rejection reason for admin review. A write may still
       // have reached the server before a transport failure: do not auto-retry.
       const reason=String(e?.message||e?.name||'Unknown update error').replace(/[\r\n]/g,' ').slice(0,300);
