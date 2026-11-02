@@ -65,6 +65,8 @@ INSERT OR IGNORE INTO bank(id,card,iban,holder) VALUES(1,'','','');
     if(!cols.includes('debt_alert')) this.db.exec('ALTER TABLE representatives ADD COLUMN debt_alert INTEGER NOT NULL DEFAULT 0');
     if(!cols.includes('alerted')) this.db.exec('ALTER TABLE representatives ADD COLUMN alerted INTEGER NOT NULL DEFAULT 0');
     if(!cols.includes('price_per_gb_month')) this.db.exec('ALTER TABLE representatives ADD COLUMN price_per_gb_month INTEGER NOT NULL DEFAULT 0');
+    if(!cols.includes('min_volume_gb')) this.db.exec('ALTER TABLE representatives ADD COLUMN min_volume_gb INTEGER NOT NULL DEFAULT 1 CHECK(min_volume_gb BETWEEN 1 AND 10000)');
+    if(!cols.includes('max_volume_gb')) this.db.exec('ALTER TABLE representatives ADD COLUMN max_volume_gb INTEGER NOT NULL DEFAULT 10000 CHECK(max_volume_gb BETWEEN 1 AND 10000)');
     const renewalCols=this.all('PRAGMA table_info(renewals)').map(x=>x.name);
     if(!renewalCols.includes('new_total'))this.db.exec('ALTER TABLE renewals ADD COLUMN new_total INTEGER');
     if(!renewalCols.includes('old_used'))this.db.exec('ALTER TABLE renewals ADD COLUMN old_used INTEGER');
@@ -115,10 +117,33 @@ INSERT OR IGNORE INTO bank(id,card,iban,holder) VALUES(1,'','','');
     this.run('UPDATE representatives SET price_per_gb_month=? WHERE id=?',amount,repId);
     this.log(actor,'rep.gig_rate',String(repId),`rate=${amount}`);
   });}
+  setVolumeLimit(repId,field,volumeGb,actor){
+    if(!['min_volume_gb','max_volume_gb'].includes(field))throw new Error('نوع محدودیت حجمی نامعتبر است.');
+    if(!Number.isSafeInteger(volumeGb)||volumeGb<1||volumeGb>10000)throw new Error('محدوده مجاز ۱ تا ۱۰۰۰۰ گیگابایت است.');
+    return this.tx(()=>{
+      const rep=this.rep(repId);
+      if(!rep)throw new Error('نماینده وجود ندارد.');
+      const nextMin=field==='min_volume_gb'?volumeGb:Number(rep.min_volume_gb);
+      const nextMax=field==='max_volume_gb'?volumeGb:Number(rep.max_volume_gb);
+      if(nextMin>nextMax)throw new Error('حداقل حجم نباید از حداکثر حجم بیشتر باشد.');
+      this.run(`UPDATE representatives SET ${field}=? WHERE id=?`,volumeGb,repId);
+      this.log(actor,'rep.volume_limit',String(repId),`${field}=${volumeGb}`);
+    });
+  }
+  volumeBounds(repId){
+    const rep=this.rep(repId);
+    if(!rep)throw new Error('نماینده پیدا نشد.');
+    return {min:Number(rep.min_volume_gb),max:Number(rep.max_volume_gb)};
+  }
+  assertVolumeAllowed(repId,volumeGb){
+    const {min,max}=this.volumeBounds(repId);
+    if(!Number.isSafeInteger(volumeGb)||volumeGb<min||volumeGb>max)
+      throw new Error(`حجم مجاز برای این نماینده بین ${min} تا ${max} گیگابایت است.`);
+  }
   customPrice(repId,volumeGb,months){
     const rep=this.rep(repId);
     if(!rep?.active)throw new Error('نماینده فعال نیست.');
-    if(!Number.isInteger(volumeGb)||volumeGb<20||volumeGb>10000)throw new Error('حجم باید بین ۲۰ تا ۱۰۰۰۰ گیگابایت باشد.');
+    this.assertVolumeAllowed(repId,volumeGb);
     if(months!==1)throw new Error('تمامی اشتراک‌ها فقط یک‌ماهه هستند.');
     const rate=Number(rep.price_per_gb_month);
     if(!Number.isSafeInteger(rate)||rate<=0)throw new Error('مدیر نرخ هر گیگابایت ماهانه را برای نماینده تعریف نکرده است.');

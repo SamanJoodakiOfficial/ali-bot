@@ -128,8 +128,9 @@ export class Bot {
     if(op==='rep'){
       const r=this.db.rep(n);if(!r)throw new Error('نماینده پیدا نشد.');
 
-      return this.say(id,`👤 <b>${html(r.name)}</b> #${r.id}\nTelegram ID: <code>${r.telegram_id}</code>\nوضعیت: ${r.active?'فعال':'غیرفعال'}\nمانده: <b>${money(this.db.balance(r.id))}</b>\nحد هشدار: ${r.debt_alert?money(r.debt_alert):'خاموش'}\nتعداد حساب: ${number(this.db.accountsCount(r.id))}\nنرخ هر گیگابایت در ماه: <b>${r.price_per_gb_month?money(r.price_per_gb_month):'تعریف نشده'}</b>`,kb(
+      return this.say(id,`👤 <b>${html(r.name)}</b> #${r.id}\nTelegram ID: <code>${r.telegram_id}</code>\nوضعیت: ${r.active?'فعال':'غیرفعال'}\nمانده: <b>${money(this.db.balance(r.id))}</b>\nحد هشدار: ${r.debt_alert?money(r.debt_alert):'خاموش'}\nتعداد حساب: ${number(this.db.accountsCount(r.id))}\nنرخ هر گیگابایت در ماه: <b>${r.price_per_gb_month?money(r.price_per_gb_month):'تعریف نشده'}</b>\nحجم مجاز ساخت و تمدید: <b>${number(r.min_volume_gb)} تا ${number(r.max_volume_gb)} گیگابایت</b>`,kb(
         [B('💰 تعیین نرخ هر گیگ/ماه',`a:gigrate:${r.id}`)],
+        [B('⚙️ محدودیت حجم ساخت و تمدید',`a:volumelimits:${r.id}`)],
         [B('⚠️ تنظیم حد هشدار',`a:threshold:${r.id}`),B('💬 گفت‌وگو',`a:chat:${r.id}`)],
         [B('📈 گزارش فروش',`a:salesrep:${r.id}`)],
         [B('👥 حساب‌ها',`a:accounts:${r.id}:0`),B('📒 گردش مالی',`a:ledger:${r.id}`)],
@@ -139,6 +140,23 @@ export class Bot {
         [B('⬅️ نمایندگان','a:reps')]));
     }
     if(op==='gigrate')return this.prompt(id,'rep.gigrate','قیمت یک گیگابایت برای یک ماه را به تومان وارد کنید. مثال: ۵۰۰۰؛ فروش ۲۰ گیگ یک‌ماهه = ۱۰۰,۰۰۰ تومان. مقدار ۰ یعنی ممنوعیت فروش.',{repId:n});
+    if(op==='volumelimits'){
+      const rep=this.db.rep(n);if(!rep)throw new Error('نماینده پیدا نشد.');
+      return this.say(id,`⚙️ <b>محدودیت حجم نماینده ${html(rep.name)}</b>
+
+حداقل حجم مجاز: <b>${number(rep.min_volume_gb)} گیگابایت</b>
+حداکثر حجم مجاز: <b>${number(rep.max_volume_gb)} گیگابایت</b>
+
+این محدودیت هم برای ساخت اشتراک جدید و هم برای تمدید اعمال می‌شود. حداقل مقدار ممکن ۱ گیگابایت است؛ حجم باید عدد صحیح باشد.`,kb(
+        [B('📉 تعیین حداقل حجم',`a:minvolume:${rep.id}`)],
+        [B('📈 تعیین حداکثر حجم',`a:maxvolume:${rep.id}`)],
+        [B('⬅️ بازگشت به نماینده',`a:rep:${rep.id}`)]));
+    }
+    if(op==='minvolume'||op==='maxvolume'){
+      const rep=this.db.rep(n);if(!rep)throw new Error('نماینده پیدا نشد.');
+      const min=op==='minvolume';
+      return this.prompt(id,min?'rep.min_volume_gb':'rep.max_volume_gb',`📦 ${min?'حداقل':'حداکثر'} حجم مجاز برای ${html(rep.name)} را به گیگابایت وارد کنید (عدد صحیح ۱ تا ۱۰۰۰۰).\nمحدوده فعلی: ${number(rep.min_volume_gb)} تا ${number(rep.max_volume_gb)} گیگ.\nاین محدودیت برای ساخت اشتراک و تمدید اعمال می‌شود.`,{repId:n});
+    }
     if(op==='rename')return this.prompt(id,'rep.rename','نام جدید نماینده:',{repId:n});
     if(op==='toggle'){const r=this.db.rep(n);if(!r)throw new Error('نماینده پیدا نشد.');this.db.updateRep(n,'active',r.active?0:1,id);return this.adminAction(id,`rep:${n}`);}
     if(op==='threshold')return this.prompt(id,'rep.threshold','حد هشدار بدهکاری بر حسب تومان را وارد کنید. «۰» یعنی غیرفعال. با عبور از حد، برای مدیر و نماینده پیام ارسال می‌شود.',{repId:n});
@@ -284,7 +302,7 @@ https://sub.example.com:2096/random-path/
     const [op,a,b]=action.split(':');const n=Number(a);
     if(op==='create'){
       if(!r.price_per_gb_month)throw new Error('مدیر هنوز نرخ هر گیگابایت ماهانه را برای شما مشخص نکرده است.');
-      return this.prompt(id,'create.volume',`➕ <b>ساخت اشتراک جدید</b>\nحجم موردنظر را به گیگابایت وارد کنید.\nحداقل: ۲۰ گیگابایت\nنرخ شما: ${money(r.price_per_gb_month)} برای هر گیگ در هر ماه.`);
+      return this.prompt(id,'create.volume',`➕ <b>ساخت اشتراک جدید</b>\nحجم موردنظر را به گیگابایت وارد کنید.\nحجم مجاز شما: ${number(r.min_volume_gb)} تا ${number(r.max_volume_gb)} گیگابایت\nمدت: فقط ۱ ماه؛ اعتبار ۳۰روزه از اولین اتصال آغاز می‌شود.\nنرخ شما: ${money(r.price_per_gb_month)} برای هر گیگ در هر ماه.`);
     }
     if(op==='createmonths'){
       const s=this.db.session(id);if(s?.state!=='create.months')throw new Error('مرحله منقضی شده است.');
@@ -532,7 +550,7 @@ ${registered}
 انقضا: ${dateText(Number(client.expiryTime),this.cfg.timezone)}
 ${owner?'📌 در فهرست شما':'📎 تمدید بدون افزودن به فهرست'}
 
-حجم <b>جدید بعد از ریست کامل</b> را وارد کنید (حداقل ۲۰ گیگ). حجم و مصرف قبلی از دوره جدید منتقل نمی‌شوند.`,{email:client.email,allowUnowned:!owner,proofKind,proofHash});
+حجم <b>جدید بعد از ریست کامل</b> را وارد کنید (${number(rep.min_volume_gb)} تا ${number(rep.max_volume_gb)} گیگ). حجم و مصرف قبلی از دوره جدید منتقل نمی‌شوند.`,{email:client.email,allowUnowned:!owner,proofKind,proofHash});
   }
   salesMenu(chat,repId){
     const admin=repId===null||this.admin(chat),prefix=admin?'a':'r';
@@ -616,6 +634,11 @@ ${owner?'📌 در فهرست شما':'📎 تمدید بدون افزودن ب�
     if(state==='rep.rename'){this.db.updateRep(p.repId,'name',trimName(raw),id);this.db.clearSession(id);return this.adminAction(id,`rep:${p.repId}`);}
     if(state==='rep.gigrate'){
       const amount=parseAmount(raw,true);this.db.setGigRate(p.repId,amount,id);this.db.clearSession(id);return this.adminAction(id,`rep:${p.repId}`);
+    }
+    if(state==='rep.min_volume_gb'||state==='rep.max_volume_gb'){
+      const volumeGb=integer(raw,1,10000,'حجم');
+      this.db.setVolumeLimit(p.repId,state==='rep.min_volume_gb'?'min_volume_gb':'max_volume_gb',volumeGb,id);
+      this.db.clearSession(id);return this.adminAction(id,`rep:${p.repId}`);
     }
     if(state==='admin.subbase'){
       let url='';
@@ -716,7 +739,8 @@ ${owner?'📌 در فهرست شما':'📎 تمدید بدون افزودن ب�
         [B('📋 فهرست اشتراک‌ها','r:accounts:0')],back()));
     }
     if(state==='create.volume'){
-      const volumeGb=integer(raw,20,10000,'حجم');
+      const volumeGb=integer(raw,1,10000,'حجم');
+      this.db.assertVolumeAllowed(rep.id,volumeGb);
       this.db.setSession(id,'create.months',{volumeGb});
       return this.say(id,`📦 حجم: ${volumeGb} گیگ\nمدت ثابت: ۱ ماه.`,this.durationButtons('r:createmonths'));
     }
@@ -733,7 +757,8 @@ ${owner?'📌 در فهرست شما':'📎 تمدید بدون افزودن ب�
         [B('✅ ایجاد حساب و ثبت بدهی','r:createconfirm')],[B('❌ لغو','home')]));
     }
     if(state==='renew.volume'){
-      const volumeGb=integer(raw,20,10000,'حجم');
+      const volumeGb=integer(raw,1,10000,'حجم');
+      this.db.assertVolumeAllowed(rep.id,volumeGb);
       this.db.setSession(id,'renew.months',{...p,volumeGb});
       return this.say(id,`📦 حجم تازه پس از ریست: ${volumeGb} گیگ\nمدت ثابت: ۱ ماه.`,this.durationButtons('r:renewmonths'));
     }

@@ -242,7 +242,8 @@ test('first-use expiry and replacement quota are strictly limited',()=>{
  assert.equal(firstUseExpiry(),-2592000000);
  assert.throws(()=>firstUseExpiry(60),/۳۰ روز/);
  assert.equal(renewalQuota(20),20*GB);
- assert.throws(()=>renewalQuota(19),/۲۰/);
+ assert.equal(renewalQuota(1),GB);
+ assert.throws(()=>renewalQuota(0),/۱/);
 });
 
 test('a never-used delayed-start subscription may still be renewed to one month from confirmation',async()=>{

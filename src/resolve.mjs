@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 export function quotaAddition(currentTotalBytes,purchasedGb) {
   const unit=1073741824;
   if (!Number.isSafeInteger(currentTotalBytes) || currentTotalBytes < 0 || currentTotalBytes === 0) throw new Error('حساب با حجم نامحدود قابل تمدید خودکار نیست.');
-  if (!Number.isInteger(purchasedGb) || purchasedGb < 20 || purchasedGb > 10000) throw new Error('حجم خرید باید حداقل ۲۰ و حداکثر ۱۰۰۰۰ گیگ باشد.');
+  if (!Number.isInteger(purchasedGb) || purchasedGb < 1 || purchasedGb > 10000) throw new Error('حجم خرید باید حداقل ۱ و حداکثر ۱۰۰۰۰ گیگ باشد.');
   const target=currentTotalBytes+purchasedGb*unit;
   if (!Number.isSafeInteger(target)) throw new Error('حجم جدید خارج از محدوده ایمن است.');
   return target;
@@ -10,8 +10,8 @@ export function quotaAddition(currentTotalBytes,purchasedGb) {
 // A renewal replaces the old quota; the panel's resetTraffic endpoint then
 // clears the separate upload/download counters. No remaining quota carries over.
 export function renewalQuota(purchasedGb) {
-  if (!Number.isInteger(purchasedGb) || purchasedGb < 20 || purchasedGb > 10000)
-    throw new Error('حجم خرید باید حداقل ۲۰ و حداکثر ۱۰۰۰۰ گیگ باشد.');
+  if (!Number.isInteger(purchasedGb) || purchasedGb < 1 || purchasedGb > 10000)
+    throw new Error('حجم خرید باید حداقل ۱ و حداکثر ۱۰۰۰۰ گیگ باشد.');
   return purchasedGb * 1073741824;
 }
 // 3x-ui encodes "Start After First Use" as a negative number of milliseconds.

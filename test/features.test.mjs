@@ -35,10 +35,13 @@ function env(){
  return {db,rep,other,bot,panel,accounts,qrs,messages,photos,click,input,close:()=>db.close()};
 }
 
-test('free GB selection requires minimum 20 and sells only one month',async()=>{
+test('free GB selection permits 1 GB and sells only one month',async()=>{
  const x=env();try{
-  await x.click('123450001','r:create');await x.input('123450001','19');
-  assert.match(x.messages.at(-1).text,/20/);
+  await x.click('123450001','r:create');await x.input('123450001','0');
+  assert.match(x.messages.at(-1).text,/۱|1/);
+  await x.input('123450001','1');
+  assert.equal(x.db.session('123450001').payload.volumeGb,1);
+  await x.click('123450001','r:create');
   await x.input('123450001','47');
   assert.equal(x.db.session('123450001').state,'create.months');
   await x.click('123450001','r:createmonths:3');
@@ -127,7 +130,8 @@ test('each representative has an independent per-GB monthly rate; historical sal
   assert.equal(x.db.customPrice(x.rep,20,1),130000);
   assert.equal(x.db.customPrice(x.other,20,1),140000);
   assert.throws(()=>x.db.customPrice(x.rep,45,2),/فقط یک‌ماهه/);
-  assert.throws(()=>x.db.customPrice(x.other,19,1),/۲۰/);
+  assert.equal(x.db.customPrice(x.other,1,1),7000);
+  assert.throws(()=>x.db.customPrice(x.other,0,1),/1/);
   // Two representatives may create equal-size accounts, but their invoice prices differ.
   for(const [user,name] of [['123450001','alice'],['123450002','bob']]){
     await x.click(user,'r:create');await x.input(user,'40');
